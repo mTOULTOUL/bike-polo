@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Bike Polo Round Manager</title>
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <script type="text/babel">
+        const { useState } = React;
+
+        function BikePoloManager() {
+          const [players, setPlayers] = useState([]);
+          const [newPlayerName, setNewPlayerName] = useState('');
+          const [currentRound, setCurrentRound] = useState(null);
+          const [roundHistory, setRoundHistory] = useState([]);
+          const [skippingPlayers, setSkippingPlayers] = useState([]);
+
+          const addPlayer = () => {
+            if (newPlayerName.trim()) {
+              const maxGames = players.length > 0 
+                ? Math.max(...players.map(p => p.gamesPlayed))
+                : 0;
+              
+              const player = {
+                id: Date.now(),
+                name: newPlayerName.trim(),
+                gamesPlayed: maxGames,
+                timesSkipped: 0,
+                timesRef: 0
+              };
+              
+              if (currentRound) {
+                const updatedRound = { ...currentRound };
+                const lastBucket = updatedRound.buckets[updatedRound.buckets.length - 1];
+                
+                if (lastBucket.players.length < 6) {
+                  lastBucket.players.push(player);
+                } else {
+                  updatedRound.buckets.push({
+                    id: Date.now(),
+                    players: [player],
+                    completed: false,
+                    refs: []
+                  });
+                }
+                setCurrentRound(updatedRound);
+              }
+              
+              setPlayers([...players, player]);
+              setNewPlayerName('');
+            }
+          };
+
+          const removePlayer = (playerId) => {
+            setPlayers(players.filter(p => p.id !== playerId));
+            setSkippingPlayers(skippingPlayers.filter(p => p.id !== playerId));
+          };
+
+          const createNewRound = () => {
+            const availablePlayers = [...players];
+            const buckets = [];
+            
+            const playersSkippingThisRound = skippingPlayers.map(sp => 
+              players.find(p => p.id === sp.id)
+            ).filter(Boolean);
+            
+            let playerPool = availablePlayers.filter(p => 
+              !playersSkippingThisRound.find(sp => sp.id === p.id)
+            );
+            
+            playerPool = playerPool.sort(() => Math.random() - 0.5);
+            
+            while (playerPool.length > 0) {
+              const bucket = {
+                id: Date.now() + buckets.length,
+                players: playerPool.splice(0, 6),
+                completed: false,
+                refs: []
+              };
+              buckets.push(bucket);
+            }
+
+            if (buckets.length > 0) {
+              const lastBucket = buckets[buckets.length - 1];
+              
+              if (lastBucket.players.length < 6 && playersSkippingThisRound.length > 0) {
+                const needed = 6 - lastBucket.players.length;
+                
+                const sortedSkipping = [...playersSkippingThisRound].sort((a, b) => {
+                  if (b.timesSkipped !== a.timesSkipped) {
+                    return b.timesSkipped - a.timesSkipped;
+                  }
+                  return a.gamesPlayed - b.gamesPlayed;
+                });
+                
+                const toAdd = sortedSkipping.slice(0, needed);
+                toAdd.forEach(player => {
+                  lastBucket.players.push(player);
+                });
+                
+                const usedIds = toAdd.map(p => p.id);
+                setSkippingPlayers(prev => prev.filter(sp => !usedIds.includes(sp.id)));
+              }
+            } else if (playersSkippingThisRound.length >= 6) {
+              const sortedSkipping = [...playersSkippingThisRound].sort((a, b) => {
+                if (b.timesSkipped !== a.timesSkipped) {
+                  return b.timesSkipped - a.timesSkipped;
+                }
+                return a.gamesPlayed - b.gamesPlayed;
+              });
+              
+              const bucket = {
+                id: Date.now(),
+                players: sortedSkipping.slice(0, 6),
+                completed: false,
+                refs: []
+              };
+              buckets.push(bucket);
+              
+              const usedIds = bucket.players.map(p => p.id);
+              setSkippingPlayers(prev => prev.filter(sp => !usedIds.includes(sp.id)));
+            }
+
+            if (buckets.length > 0) {
+              const firstBucket = buckets[0];
+              const playersInFirstBucket = new Set(firstBucket.players.map(p => p.id));
+              const availableForRef = availablePlayers.filter(p => !playersInFirstBucket.has(p.id));
+              
+              if (availableForRef.length >= 2) {
+                const sortedForRef = availableForRef.sort((a, b) => {
+                  if (a.timesRef !== b.timesRef) {
+                    return a.timesRef - b.timesRef;
+                  }
+                  return a.name.localeCompare(b.name);
+                });
+                
+                firstBucket.refs = sortedForRef.slice(0, 2);
+              }
+            }
+
+            setCurrentRound({
+              id: Date.now(),
+              buckets,
+              roundNumber: roundHistory.length + 1
+            });
+          };
+
+          const skipCurrentRound = () => {
+            if (!currentRound) return;
+            
+            skippingPlayers.forEach(skippedPlayer => {
+              const playerIndex = players.findIndex(p => p.id === skippedPlayer.id);
+              if (playerIndex !== -1) {
+                players[playerIndex].timesSkipped++;
+              }
+            });
+            
+            setRoundHistory([...roundHistory, currentRound]);
+            setCurrentRound(null);
+            setSkippingPlayers([]);
+            setPlayers([...players]);
+          };
+
+          const completeBucket = (bucketId) => {
+            if (!currentRound) return;
+
+            const updatedRound = { ...currentRound };
+            const bucketIndex = updatedRound.buckets.findIndex(b => b.id === bucketId);
+            
+            if (bucketIndex === -1) return;
+
+            const bucket = updatedRound.buckets[bucketIndex];
+            bucket.completed = true;
+
+            bucket.players.forEach(player => {
+              const playerIndex = players.findIndex(p => p.id === player.id);
+              if (playerIndex !== -1) {
+                players[playerIndex].gamesPlayed++;
+              }
+            });
+
+            bucket.refs.forEach(ref => {
+              const playerIndex = players.findIndex(p => p.id === ref.id);
+              if (playerIndex !== -1) {
+                players[playerIndex].timesRef++;
+              }
+            });
+
+            updatedRound.buckets.splice(bucketIndex, 1);
+
+            if (updatedRound.buckets.length > 0) {
+              const nextBucket = updatedRound.buckets[0];
+              if (!nextBucket.refs || nextBucket.refs.length === 0) {
+                const playersInNextBucket = new Set(nextBucket.players.map(p => p.id));
+                const availableForRef = players.filter(p => !playersInNextBucket.has(p.id));
+                
+                if (availableForRef.length >= 2) {
+                  const sortedForRef = availableForRef.sort((a, b) => {
+                    if (a.timesRef !== b.timesRef) {
+                      return a.timesRef - b.timesRef;
+                    }
+                    return a.name.localeCompare(b.name);
+                  });
+                  
+                  nextBucket.refs = sortedForRef.slice(0, 2);
+                }
+              }
+            }
+
+            if (updatedRound.buckets.length === 1) {
+              const lastBucket = updatedRound.buckets[0];
+              
+              if (lastBucket.players.length < 6) {
+                const needed = 6 - lastBucket.players.length;
+                const toAdd = [];
+                
+                if (skippingPlayers.length > 0) {
+                  const availableSkipping = skippingPlayers
+                    .map(sp => players.find(p => p.id === sp.id))
+                    .filter(p => p && !lastBucket.players.find(lp => lp.id === p.id))
+                    .sort((a, b) => {
+                      if (b.timesSkipped !== a.timesSkipped) {
+                        return b.timesSkipped - a.timesSkipped;
+                      }
+                      return a.gamesPlayed - b.gamesPlayed;
+                    });
+                  
+                  const fromSkipping = availableSkipping.slice(0, needed);
+                  toAdd.push(...fromSkipping);
+                }
+                
+                if (toAdd.length < needed) {
+                  if (!updatedRound.playersInRound) {
+                    updatedRound.playersInRound = new Set();
+                  }
+                  bucket.players.forEach(p => updatedRound.playersInRound.add(p.id));
+
+                  const availableToRepeat = players.filter(p => 
+                    updatedRound.playersInRound.has(p.id) && 
+                    !skippingPlayers.find(sp => sp.id === p.id) &&
+                    !lastBucket.players.find(lp => lp.id === p.id) &&
+                    !toAdd.find(ap => ap.id === p.id)
+                  );
+
+                  const minSkipCount = Math.min(...availableToRepeat.map(p => p.timesSkipped));
+                  const playersWithMinSkips = availableToRepeat.filter(p => p.timesSkipped === minSkipCount);
+                  const shuffled = playersWithMinSkips.sort(() => Math.random() - 0.5);
+
+                  const stillNeeded = needed - toAdd.length;
+                  const fromPlayed = shuffled.slice(0, stillNeeded);
+                  
+                  toAdd.push(...fromPlayed);
+                }
+
+                const newSkipping = [];
+                toAdd.forEach(player => {
+                  lastBucket.players.push(player);
+                  if (!skippingPlayers.find(sp => sp.id === player.id)) {
+                    newSkipping.push(player);
+                  }
+                });
+                
+                updatedRound.newSkippingPlayers = newSkipping;
+                
+                const usedSkippingIds = toAdd
+                  .filter(p => skippingPlayers.find(sp => sp.id === p.id))
+                  .map(p => p.id);
+                
+                if (usedSkippingIds.length > 0) {
+                  setSkippingPlayers(prev => prev.filter(sp => !usedSkippingIds.includes(sp.id)));
+                }
+              }
+            }
+
+            if (updatedRound.buckets.length === 0) {
+              setRoundHistory([...roundHistory, updatedRound]);
+              setCurrentRound(null);
+              
+              skippingPlayers.forEach(skippedPlayer => {
+                const playerIndex = players.findIndex(p => p.id === skippedPlayer.id);
+                if (playerIndex !== -1) {
+                  players[playerIndex].timesSkipped++;
+                }
+              });
+              
+              if (updatedRound.newSkippingPlayers && updatedRound.newSkippingPlayers.length > 0) {
+                setSkippingPlayers(updatedRound.newSkippingPlayers);
+              } else {
+                setSkippingPlayers([]);
+              }
+            } else {
+              setCurrentRound(updatedRound);
+            }
+
+            setPlayers([...players]);
+          };
+
+          return (
+            <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-6">
+              <div className="max-w-6xl mx-auto">
+                <div className="bg-white rounded-xl shadow-lg p-8 mb-6">
+                  <h1 className="text-4xl font-bold text-indigo-900 mb-2 flex items-center gap-3">
+                    🚴 Bike Polo Round Manager
+                  </h1>
+                  <p className="text-gray-600">Manage players and rounds fairly with automated bucket assignment</p>
+                </div>
+
+                <div className="grid md:grid-cols-2 gap-6 mb-6">
+                  <div className="bg-white rounded-xl shadow-lg p-6">
+                    <h2 className="text-2xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+                      👥 Players ({players.length})
+                    </h2>
+                    
+                    <div className="flex gap-2 mb-4">
+                      <input
+                        type="text"
+                        value={newPlayerName}
+                        onChange={(e) => setNewPlayerName(e.target.value)}
+                        onKeyPress={(e) => e.key === 'Enter' && addPlayer()}
+                        placeholder="Player name"
+                        className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+                      />
+                      <button
+                        onClick={addPlayer}
+                        className="bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 transition flex items-center gap-2"
+                      >
+                        ➕ Add
+                      </button>
+                    </div>
+
+                    <div className="space-y-2 max-h-96 overflow-y-auto">
+                      {players.map(player => (
+                        <div key={player.id} className="flex items-center justify-between p-3 bg-gray-50 rounded-lg">
+                          <div>
+                            <span className="font-medium text-gray-800">{player.name}</span>
+                            <div className="text-sm text-gray-600">
+                              Games: {player.gamesPlayed} | Skips: {player.timesSkipped} | Refs: {player.timesRef}
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => removePlayer(player.id)}
+                            className="text-red-500 hover:text-red-700 transition"
+                          >
+                            🗑️
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="bg-white rounded-xl shadow-lg p-6">
+                    <h2 className="text-2xl font-bold text-gray-800 mb-4">Round Control</h2>
+                    
+                    {!currentRound ? (
+                      <button
+                        onClick={createNewRound}
+                        disabled={players.length < 6}
+                        className="w-full bg-green-600 text-white px-6 py-4 rounded-lg hover:bg-green-700 transition disabled:bg-gray-300 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-lg font-semibold"
+                      >
+                        ▶️ Start New Round
+                      </button>
+                    ) : (
+                      <div className="space-y-4">
+                        <div className="bg-indigo-50 p-4 rounded-lg">
+                          <div className="text-sm text-indigo-600 font-semibold mb-1">Current Round</div>
+                          <div className="text-2xl font-bold text-indigo-900">Round #{currentRound.roundNumber}</div>
+                          <div className="text-sm text-gray-600 mt-1">
+                            {currentRound.buckets.length} bucket(s) remaining
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={skipCurrentRound}
+                          className="w-full bg-red-600 text-white px-4 py-3 rounded-lg hover:bg-red-700 transition flex items-center justify-center gap-2 font-semibold"
+                        >
+                          ⚠️ Skip Current Round
+                        </button>
+
+                        {skippingPlayers.length > 0 && (
+                          <div className="bg-orange-50 border border-orange-200 rounded-lg p-3">
+                            <div className="flex items-start gap-2">
+                              <span className="text-orange-600">⚠️</span>
+                              <div>
+                                <div className="font-semibold text-orange-800 text-sm">Skipping Current Round:</div>
+                                <div className="text-sm text-orange-700">
+                                  {skippingPlayers.map(p => p.name).join(', ')}
+                                </div>
+                                <div className="text-xs text-orange-600 mt-1">
+                                  These players will have priority in the next round
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {currentRound.newSkippingPlayers && currentRound.newSkippingPlayers.length > 0 && (
+                          <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+                            <div className="flex items-start gap-2">
+                              <span className="text-yellow-600">⚠️</span>
+                              <div>
+                                <div className="font-semibold text-yellow-800 text-sm">Will Skip Next Round:</div>
+                                <div className="text-sm text-yellow-700">
+                                  {currentRound.newSkippingPlayers.map(p => p.name).join(', ')}
+                                </div>
+                                <div className="text-xs text-yellow-600 mt-1">
+                                  Added to fill last game - will skip next round
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="mt-6">
+                      <h3 className="font-semibold text-gray-700 mb-2">Stats</h3>
+                      <div className="text-sm text-gray-600 space-y-1">
+                        <div>Completed Rounds: {roundHistory.length}</div>
+                        <div>Total Players: {players.length}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                {currentRound && (
+                  <div className="bg-white rounded-xl shadow-lg p-6">
+                    <h2 className="text-2xl font-bold text-gray-800 mb-4">Active Games</h2>
+                    <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+                      {currentRound.buckets.map((bucket, index) => (
+                        <div key={bucket.id} className="border-2 border-indigo-200 rounded-lg p-4 bg-indigo-50">
+                          <div className="flex items-center justify-between mb-3">
+                            <h3 className="font-bold text-indigo-900">Game {index + 1}</h3>
+                            <span className="text-indigo-600">⏱️</span>
+                          </div>
+                          
+                          {bucket.refs && bucket.refs.length > 0 && (
+                            <div className="mb-3 p-2 bg-yellow-100 rounded border border-yellow-300">
+                              <div className="text-xs font-semibold text-yellow-800 mb-1">REFS:</div>
+                              {bucket.refs.map((ref, i) => (
+                                <div key={i} className="text-sm text-yellow-900 font-medium">
+                                  {ref.name}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                          
+                          <div className="space-y-2 mb-4">
+                            {bucket.players.map((player, i) => (
+                              <div key={i} className="text-sm bg-white px-3 py-2 rounded">
+                                {player.name}
+                              </div>
+                            ))}
+                            {bucket.players.length < 6 && (
+                              <div className="text-sm text-gray-400 italic px-3 py-2">
+                                {6 - bucket.players.length} spot(s) open
+                              </div>
+                            )}
+                          </div>
+
+                          <button
+                            onClick={() => completeBucket(bucket.id)}
+                            disabled={bucket.players.length < 6}
+                            className="w-full bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition disabled:bg-gray-300 disabled:cursor-not-allowed text-sm font-semibold"
+                          >
+                            Complete Game
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </div>
+          );
+        }
+
+        ReactDOM.render(<BikePoloManager />, document.getElementById('root'));
+    </script>
+</body>
+</html>
